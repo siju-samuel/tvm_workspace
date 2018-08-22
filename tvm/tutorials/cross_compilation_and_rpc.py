@@ -26,7 +26,7 @@ and Firefly-RK3399 for opencl example.
 #   All instructions in both this section and next section should be
 #   executed on the target device, e.g. Raspberry Pi. And we assume it
 #   has Linux running.
-# 
+#
 # Since we do compilation on local machine, the remote device is only used
 # for running the generated code. We only need to build tvm runtime on
 # the remote device.
@@ -148,7 +148,10 @@ func.export_library(path)
 # First we obtain an RPC session from remote device.
 
 if local_demo:
-    remote = rpc.LocalSession()
+    #remote = rpc.LocalSession()
+    host = '127.0.0.1'
+    port = 9090
+    remote = rpc.connect(host, port)
 else:
     # The following is my environment, change this to the IP address of your target device
     host = '10.77.1.162'
@@ -185,7 +188,7 @@ print('%g secs/op' % cost)
 # Run OpenCL Kernel Remotely by RPC
 # ---------------------------------
 # As for remote OpenCL devices, the workflow is almost the same as above.
-# You can define the kernel, upload files, and run by RPC. 
+# You can define the kernel, upload files, and run by RPC.
 #
 # .. note::
 #

@@ -339,6 +339,14 @@ def _concat():
             extras={'axis': axis.asnumpy()[0]})(inputs, attr)
     return _impl
 
+def _pack():
+    def _impl(inputs, attr, params):
+        axis = int(attr["axis"])
+        inputs_reshaped = [_sym.expand_dims(i, axis=axis, num_newaxis=1) for i in inputs]
+        return _sym.concatenate(*inputs_reshaped, axis=axis)
+
+    return _impl
+
 def _reshape():
     def _impl(inputs, attr, params):
         try:
@@ -422,7 +430,6 @@ def _fill():
 
 def _lrn():
     def _impl(inputs, attr, params):
-        new_inputs = []
         attr_new = {}
         depth_radius = attr.get('depth_radius', 5)
         size = (depth_radius * 2) + 1
@@ -431,7 +438,7 @@ def _lrn():
         attr_new['bias'] = attr.get('bias', 1)
         attr_new['alpha'] = attr.get('alpha', 1) * size
         attr_new['beta'] = attr.get('beta', 0.5)
-        return AttrCvt(op_name='lrn')(new_inputs, attr_new)
+        return AttrCvt(op_name='lrn')(inputs, attr_new)
     return _impl
 
 def _sum():
@@ -596,9 +603,21 @@ def _LSTMBlockCell():
         forget_bias = attr.pop('forget_bias')
         input_shape = attr['_input_shapes'][inputs[0]]
         weight_shape = attr['_input_shapes'][inputs[3]]
+
         batch_size, input_size = input_shape[0][0], input_shape[0][1]
         num_hidden_layers = weight_shape[0][1]
         num_hidden = num_hidden_layers // 4
+        print("")
+        print("batch_size=", batch_size)
+        print("input_size=", input_size)
+
+        print("input_shape=", input_shape)
+        print("weight_shape=", weight_shape)
+        print("forget_bias=", forget_bias)
+        print("batch_size=", batch_size)
+        print("input_size=", input_size)
+        print("num_hidden_layers=", num_hidden_layers)
+        print("num_hidden=", num_hidden)
 
         in_data = _sym.reshape(in_data,
                                shape=(batch_size, input_size))

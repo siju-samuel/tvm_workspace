@@ -42,7 +42,8 @@ def download(url, path, overwrite=False):
 # We load a pretrained resnet-50 classification model provided by keras.
 weights_url = ''.join(['https://github.com/fchollet/deep-learning-models/releases/',
                        'download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels.h5'])
-weights_file = 'resnet50_weights.h5'
+#weights_file = 'resnet50_weights.h5'
+weights_file = 's2s.h5'
 download(weights_url, weights_file)
 keras_resnet50 = keras.applications.resnet50.ResNet50(include_top=True, weights=None,
 	input_shape=(224,224,3), classes=1000)
@@ -73,7 +74,7 @@ print('input_1', data.shape)
 # convert the keras model(NHWC layout) to NNVM format(NCHW layout).
 sym, params = nnvm.frontend.from_keras(keras_resnet50)
 # compile the model
-target = 'cuda'
+target = 'llvm'
 shape_dict = {'input_1': data.shape}
 with nnvm.compiler.build_config(opt_level=2):
 	graph, lib, params = nnvm.compiler.build(sym, target, shape_dict, params=params)
@@ -83,7 +84,7 @@ with nnvm.compiler.build_config(opt_level=2):
 # ---------------
 # The process is no different from other examples.
 from tvm.contrib import graph_runtime
-ctx = tvm.gpu(0)
+ctx = tvm.cpu(0)
 m = graph_runtime.create(graph, lib, ctx)
 # set inputs
 m.set_input('input_1', tvm.nd.array(data.astype('float32')))

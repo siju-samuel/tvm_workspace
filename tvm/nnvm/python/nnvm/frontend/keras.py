@@ -375,6 +375,108 @@ def _convert_reshape(insym, keras_layer, _):
     shape = (-1, ch) + keras_layer.target_shape[:-1]
     return _sym.reshape(insym, shape=shape)
 
+_state_ctr = {}
+_state_ctr['lstm_c'] = 0
+_state_ctr['lstm_h'] = 0
+
+def _new_state_sym(name, init=None):
+    """Returs a symbol for state"""
+    sym_name = name + "_state%d" % _state_ctr[name]
+    _state_ctr[name] += 1
+    return _sym.Variable(name=sym_name, init=init)
+
+def _get_state_buffer(init_size, name):
+    """Get the state buffer for rnn."""
+    buffer = np.zeros((1, init_size), 'float32')
+    return _new_state_sym(name, init=buffer)
+
+def _convert_lstm(insym, keras_layer, symtab):
+    _check_data_format(keras_layer)
+    #print(" _convert_lstm insym = ", insym)
+    #print(" _convert_lstm keras_layer", keras_layer)
+    #print(" _convert_lstm symtab", symtab)
+    print(" input_shape = ", keras_layer.input_shape, "Len =", len(keras_layer.input_shape))
+    print(" output_shape = ", keras_layer.output_shape, "Len =", len(keras_layer.output_shape))
+    #print(" state units = ", keras_layer.units)
+    if not isinstance(insym, list):
+        #print(" First layer")
+        params = {}
+        c_sym = _get_state_buffer(keras_layer.units, "lstm_c")
+        h_sym = _get_state_buffer(keras_layer.units, "lstm_h")
+        params['lstm_c'] = c_sym
+        params['lstm_h'] = h_sym
+        #print("finish LSTM layer 1")
+        insym =  [insym, c_sym, h_sym]
+
+    input_shapes = keras_layer.input_shape
+    if not isinstance(input_shapes, list):
+        input_shapes = [input_shapes]
+
+    in_data = insym[0]
+    in_state_c = insym[1]
+    in_state_h = insym[2]
+
+    weightList = keras_layer.get_weights()
+    in_weight = symtab.new_const(weightList[0].transpose([1, 0]))
+    in_bias = symtab.new_const(weightList[2])
+    forget_bias = 0.0#symtab.new_const(weightList[1])
+
+    input_shape = (1, input_shapes[0][-1])
+    weight_shape = weightList[0].shape
+
+
+    batch_size, input_size = input_shape[0], input_shape[1]
+    num_hidden_layers = weight_shape[1]
+    num_hidden = keras_layer.units
+
+    print("")
+    print("batch_size=", batch_size)
+    print("input_size=", input_size)
+
+    print("input_shape=", input_shape)
+    print("weight_shape=", weight_shape)
+    print("forget_bias=", forget_bias)
+    print("batch_size=", batch_size)
+    print("input_size=", input_size)
+    print("num_hidden_layers=", num_hidden_layers)
+    print("num_hidden=", num_hidden)
+
+    in_data = _sym.reshape(in_data,
+                           shape=(batch_size, input_size))
+    #ixh = _sym.concatenate(*[in_data, in_state_h], axis=1)
+    #in_weight = _sym.transpose(in_weight)
+
+    gates = _sym.dense(in_data, in_weight, in_bias, use_bias=True, units=num_hidden_layers)
+
+    gate_list = _sym.split(gates, indices_or_sections=4, axis=1)
+    in_gate = _sym.sigmoid(gate_list[0])
+    in_transform = _sym.tanh(gate_list[1])
+    forget_gate = _sym.sigmoid(gate_list[2]) #+ forget_bias
+    out_gate = _sym.sigmoid(gate_list[3])
+
+    next_c = _sym.broadcast_add(_sym.broadcast_mul(forget_gate, in_state_c),
+                                _sym.broadcast_mul(in_gate, in_transform))
+    next_h = out_gate * _sym.tanh(next_c)
+
+    #out_state = _sym.concatenate(*[next_c, next_h])
+    #out_state = _sym.reshape(out_state,
+    #                         shape=(2, batch_size, num_hidden))
+
+    #print("finish LSTM layer")
+    return [next_h, next_c, next_h]
+
+def _convert_repeat_vector(insym, keras_layer, symtab):
+    print("_convert_repeat_vector keras_layer.n =" ,keras_layer.n)
+    print("_convert_repeat_vector input_shape = ", keras_layer.input_shape, "Len =", len(keras_layer.input_shape))
+    print("_convert_repeat_vector output_shape = ", keras_layer.output_shape, "Len =", len(keras_layer.output_shape))
+    return insym
+
+
+def _convert_time_distributed(insym, keras_layer, symtab):
+    #print("keras_layer.n =" ,keras_layer.n)
+    print("_convert_time_distributed input_shape = ", keras_layer.input_shape, "Len =", len(keras_layer.input_shape))
+    print("_convert_time_distributed output_shape = ", keras_layer.output_shape, "Len =", len(keras_layer.output_shape))
+    return insym
 
 def _default_skip(insym, keras_layer, _): # pylint: disable=unused-argument
     """Layers that can be skipped because they are train time only."""
@@ -422,17 +524,17 @@ _convert_map = {
     # 'Conv1D'                 : _convert_convolution1d,
 
     # 'GRU'                    : _convert_gru,
-    # 'LSTM'                   : _convert_lstm,
+    'LSTM'                     : _convert_lstm,
     # 'SimpleRNN'              : _convert_simple_rnn,
     # 'Bidirectional'          : _convert_bidirectional,
-    # 'TimeDistributed'        : _default_skip,
+    'TimeDistributed'          : _convert_time_distributed,
 
     # 'Average'                : _convert_merge,
     # 'Maximum'                : _convert_merge,
     # 'Dot'                    : _convert_merge,
     # 'Permute'                : _convert_permute,
     # 'Embedding'              : _convert_embedding,
-    # 'RepeatVector'           : _convert_repeat_vector,
+    'RepeatVector'             : _convert_repeat_vector,
 
     'InputLayer'               : _default_skip,
     'Dropout'                  : _default_skip,
@@ -446,6 +548,11 @@ def _check_unsupported_layers(model):
         if type(layer).__name__ not in _convert_map:
             raise ValueError("Keras layer {} not supported.".format(type(layer).__name__))
 
+def _as_list(arr):
+    """Force being a list, ignore if already is."""
+    if isinstance(arr, list):
+        return arr
+    return [arr]
 
 def keras_op_to_nnvm(insym, keras_layer, outname, symtab):
     """Convert keras layer to nnvm symbol, and update symtab.
@@ -469,6 +576,32 @@ def keras_op_to_nnvm(insym, keras_layer, outname, symtab):
     ret = _convert_map[type(keras_layer).__name__](insym, keras_layer, symtab)
     symtab.set_var(outname, ret)
 
+def keras_op_to_nnvm2(insym, keras_layer, outname, symtab):
+    """Convert keras layer to nnvm symbol, and update symtab.
+
+    Parameters
+    ----------
+    insym : nnvm.symbol.Symbol or a list of it
+        The input nnvm symbol(s)
+
+    keras_layer : keras.layers
+        The keras layer to be converted
+
+    outname : str
+        Name of the output nnvm symbol
+
+    symtab : nnvm.frontend.common.SymbolTable
+        The global symbol table to be updated
+    """
+    if type(keras_layer).__name__ not in _convert_map:
+        raise NotImplementedError("{} is not supported".format((type(keras_layer).__name__)))
+    sym = _convert_map[type(keras_layer).__name__](insym, keras_layer, symtab)
+    sym = _as_list(sym)
+    out_tensors = len(sym)
+    for tensor_idx in range(out_tensors):
+            name = outname + ':' + str(tensor_idx)
+            print("outname=", outname, "name =", name, "sym=", sym[tensor_idx])
+            symtab.set_var(name, sym[tensor_idx])
 
 def from_keras(model):
     """Convert keras model to NNVM format.
@@ -490,7 +623,74 @@ def from_keras(model):
         import keras
     except ImportError:
         raise ImportError('Keras must be installed')
+    print(model.to_json(indent=4))
+    assert isinstance(model, keras.engine.training.Model)
+    if keras.backend.backend() != 'tensorflow':
+        raise ValueError("Keras frontend currently supports tensorflow backend only.")
+    if keras.backend.image_data_format() != 'channels_last':
+        raise ValueError("Keras frontend currently supports data_format = channels_last only.")
+    _check_unsupported_layers(model)
 
+    symtab = SymbolTable()
+    for keras_layer in model.layers:
+        print("isinstance(keras_layer)=", type(keras_layer))
+        if isinstance(keras_layer, keras.engine.InputLayer):
+            symtab.get_var(keras_layer.name, must_contain=False)
+        else:
+            inbound_nodes = keras_layer.inbound_nodes if hasattr(keras_layer, 'inbound_nodes') \
+                       else keras_layer._inbound_nodes if hasattr(keras_layer, '_inbound_nodes') \
+                       else None
+            if inbound_nodes is None:
+                raise TypeError("Unknown layer type or unsupported Keras version : {}"
+                                .format(keras_layer))
+            for my_idx, node in enumerate(inbound_nodes):
+                print("my_idx", my_idx, "inbound_nodes=", node)
+                insym = []
+
+                # Since Keras allows creating multiple layers from the same name instance,
+                # we append node index to the symbol name to make it unique.
+                # The one exception is InputLayer.  Changing input variable names after conversion
+                # would confuse users, so we should keep them as far as possible.  Fortunately,
+                # they are named uniquely to input_1, input_2, input_3 ... by default.
+                for pred_idx, pred in zip(node.node_indices, node.inbound_layers):
+                    print("pred_idx", pred_idx, "pred.name=", pred.name)
+                    if isinstance(pred, keras.engine.InputLayer):
+                        _sym = symtab.get_var(pred.name, must_contain=True)
+                    else:
+                        _sym = symtab.get_var(pred.name + ':' + str(pred_idx), must_contain=True)
+                    insym.append(_sym)
+
+                if len(insym) == 1:
+                    insym = insym[0]
+                keras_op_to_nnvm(insym, keras_layer, keras_layer.name + ':' + str(my_idx), symtab)
+
+    outsym = symtab.get_var(model._output_layers[0].name + ':0')
+    tvmparams = {k:tvm.nd.array(np.array(v, dtype=np.float32)) for k, v in symtab.params.items()}
+    #print("tvmparams = ", tvmparams)
+    #print("outsym = ", outsym.debug_str())
+    return outsym, tvmparams
+
+def from_keras2(model):
+    """Convert keras model to NNVM format.
+
+    Parameters
+    ----------
+    model : keras.engine.training.Model
+        The keras model to be converted
+
+    Returns
+    -------
+    sym : nnvm.Symbol
+        Compatible nnvm symbol
+
+    params : dict of str to tvm.NDArray
+        The parameter dict to be used by nnvm
+    """
+    try:
+        import keras
+    except ImportError:
+        raise ImportError('Keras must be installed')
+    print(model.to_json(indent=4))
     assert isinstance(model, keras.engine.training.Model)
     if keras.backend.backend() != 'tensorflow':
         raise ValueError("Keras frontend currently supports tensorflow backend only.")
@@ -509,25 +709,44 @@ def from_keras(model):
             if inbound_nodes is None:
                 raise TypeError("Unknown layer type or unsupported Keras version : {}"
                                 .format(keras_layer))
+            #print("inbound_nodes", inbound_nodes)
             for my_idx, node in enumerate(inbound_nodes):
                 insym = []
-
+                print("my_idx=", my_idx)
                 # Since Keras allows creating multiple layers from the same name instance,
                 # we append node index to the symbol name to make it unique.
                 # The one exception is InputLayer.  Changing input variable names after conversion
                 # would confuse users, so we should keep them as far as possible.  Fortunately,
                 # they are named uniquely to input_1, input_2, input_3 ... by default.
-                for pred_idx, pred in zip(node.node_indices, node.inbound_layers):
+                #print("node, my_idx", node , my_idx)
+                prev_out_idx = 0
+                #for pred_idx, out_idx, pred in zip(node.node_indices, node.tensor_indices, node.inbound_layers):
+                for idx, pred in enumerate(node.inbound_layers):
+                    pred = node.inbound_layers[idx]
+                    pred_idx = node.node_indices[idx]
+                    t_idx = node.tensor_indices[idx]
+
+                    print("pred =", pred, "pred_idx=", pred_idx,  "pred_name=" ,pred.name)
                     if isinstance(pred, keras.engine.InputLayer):
                         _sym = symtab.get_var(pred.name, must_contain=True)
+                        print("****keras.engine.InputLayer****")
                     else:
-                        _sym = symtab.get_var(pred.name + ':' + str(pred_idx), must_contain=True)
+                        pred_name = pred.name + ':' + str(pred_idx)  + ':' + str(t_idx)
+                        _sym = symtab.get_var(pred_name, must_contain=True)
+                        print("Input Sym name=", pred_name, " sym =", _sym)
                     insym.append(_sym)
 
                 if len(insym) == 1:
                     insym = insym[0]
                 keras_op_to_nnvm(insym, keras_layer, keras_layer.name + ':' + str(my_idx), symtab)
-
-    outsym = symtab.get_var(model._output_layers[0].name + ':0')
+                #print("")
+                print("")
+            #break
+    #print("out_name=", model._output_layers[0].name)
+    outsym = symtab.get_var(model._output_layers[0].name + ':0:0')
+    #outsym = symtab.get_var('lstm_1:0')
     tvmparams = {k:tvm.nd.array(np.array(v, dtype=np.float32)) for k, v in symtab.params.items()}
+    #print("tvmparams = ", tvmparams)
+    #print("outsym = ", outsym.debug_str())
     return outsym, tvmparams
+

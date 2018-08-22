@@ -64,6 +64,7 @@ def _server_env(load_library):
 def _serve_loop(sock, addr, load_library):
     """Server loop"""
     sockfd = sock.fileno()
+    print("IN Server loop _serve_loop")
     temp = _server_env(load_library)
     base._ServerLoop(sockfd)
     temp.remove()
@@ -80,6 +81,8 @@ def _parse_server_opt(opts):
 
 def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
     """Listening loop of the server master."""
+
+    print("Listening loop event", sock, port, rpc_key, tracker_addr, load_library, custom_addr)
     def _accept_conn(listen_sock, tracker_conn, ping_period=2):
         """Accept connection from the other places.
 
@@ -94,6 +97,7 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
         ping_period : float, optional
             ping tracker every k seconds if no connection is accepted.
         """
+        print("accept connection", listen_sock, tracker_conn, ping_period)
         old_keyset = set()
         # Report resource to tracker
         if tracker_conn:
@@ -101,14 +105,19 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
             base.sendjson(tracker_conn,
                           [TrackerCode.PUT, rpc_key, (port, matchkey), custom_addr])
             assert base.recvjson(tracker_conn) == TrackerCode.SUCCESS
+            print("accept connection", listen_sock, tracker_conn, ping_period)
+            print("tracker_conn, matchkey=", matchkey, rpc_key)
         else:
             matchkey = rpc_key
+            print("NOT tracker_conn, matchkey=", matchkey)
 
         unmatch_period_count = 0
         unmatch_timeout = 4
         # Wait until we get a valid connection
         while True:
             if tracker_conn:
+                print("*************while True if tracker_conn", tracker_conn)
+
                 trigger = select.select([listen_sock], [], [], ping_period)
                 if not listen_sock in trigger[0]:
                     base.sendjson(tracker_conn, [TrackerCode.GET_PENDING_MATCHKEYS])
@@ -131,7 +140,9 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
                         unmatch_period_count = 0
                     continue
             conn, addr = listen_sock.accept()
+            print("while True listen_sock.accept", conn, addr)
             magic = struct.unpack("<i", base.recvall(conn, 4))[0]
+            print("while True struct.unpack", magic)
             if magic != base.RPC_MAGIC:
                 conn.close()
                 continue
@@ -141,6 +152,7 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
             expect_header = "client:" + matchkey
             server_key = "server:" + rpc_key
             if arr[0] != expect_header:
+                print("arr[0] != expect_header:")
                 conn.sendall(struct.pack("<i", base.RPC_CODE_MISMATCH))
                 conn.close()
                 logger.warning("mismatch key from %s", addr)
@@ -154,9 +166,11 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
     # Server logic
     tracker_conn = None
     while True:
+        print("Server Logic")
         try:
             # step 1: setup tracker and report to tracker
             if tracker_addr and tracker_conn is None:
+                print("step 1: setup tracker and report to tracker if tracker_addr and tracker_conn is None:")
                 tracker_conn = base.connect_with_retry(tracker_addr)
                 tracker_conn.sendall(struct.pack("<i", base.RPC_TRACKER_MAGIC))
                 magic = struct.unpack("<i", base.recvall(tracker_conn, 4))[0]
@@ -169,6 +183,7 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
                 assert base.recvjson(tracker_conn) == TrackerCode.SUCCESS
 
             # step 2: wait for in-coming connections
+            print("step 2: wait for in-coming connections _accept_conn")
             conn, addr, opts = _accept_conn(sock, tracker_conn)
         except (socket.error, IOError):
             # retry when tracker is dropped
@@ -180,18 +195,21 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
             raise exc
 
         # step 3: serving
+        print("step 3: serving ", addr)
         logger.info("connection from %s", addr)
         server_proc = multiprocessing.Process(target=_serve_loop,
                                               args=(conn, addr, load_library))
         server_proc.deamon = True
         server_proc.start()
         # close from our side.
+        print("step 4: close from our side ")
         conn.close()
         # wait until server process finish or timeout
         server_proc.join(opts.get("timeout", None))
         if server_proc.is_alive():
             logger.info("Timeout in RPC session, kill..")
             server_proc.terminate()
+            print("step 5: ait until server process finish or timeout ")
 
 
 def _connect_proxy_loop(addr, key, load_library):
@@ -301,6 +319,10 @@ class Server(object):
                  load_library=None,
                  custom_addr=None,
                  silent=False):
+        print("__init__ Server initalized ", "host=", host, "port=", port,
+                    "port_end=", port_end, "is_proxy=", is_proxy, "use_popen=", use_popen,
+                    "tracker_addr=", tracker_addr, "key=", key, "load_library=", load_library,
+                    "custom_addr=", custom_addr, "silent=", silent)
         try:
             if base._ServerLoop is None:
                 raise RuntimeError("Please compile with USE_RPC=1")
@@ -334,12 +356,14 @@ class Server(object):
             self.proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
             time.sleep(0.5)
         elif not is_proxy:
+            print("Not proxy")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.port = None
             for my_port in range(port, port_end):
                 try:
                     sock.bind((host, my_port))
                     self.port = my_port
+                    print("Bind done to port=", my_port)
                     break
                 except socket.error as sock_err:
                     if sock_err.errno in [98, 48]:
@@ -357,6 +381,8 @@ class Server(object):
                     self.custom_addr))
             self.proc.deamon = True
             self.proc.start()
+            print(vars(self))
+
         else:
             self.proc = multiprocessing.Process(
                 target=_connect_proxy_loop, args=((host, port), key, load_library))

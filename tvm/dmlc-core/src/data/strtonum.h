@@ -30,8 +30,6 @@ inline bool isdigitchars(char c) {
     || c == 'e' || c == 'E';
 }
 
-const int kStrtofMaxDigits = 19;
-
 /*!
  * \brief A faster version of strtof
  * TODO the current version does not support INF, NAN, and hex number
@@ -59,15 +57,11 @@ inline float strtof(const char *nptr, char **endptr) {
   if (*p == '.') {
     uint64_t pow10 = 1;
     uint64_t val2 = 0;
-    int digit_cnt = 0;
     ++p;
     while (isdigit(*p)) {
-      if (digit_cnt < kStrtofMaxDigits) {
-        val2 = val2 * 10 + (*p - '0');
-        pow10 *= 10;
-      }
+      val2 = val2 * 10 + (*p - '0');
+      pow10 *= 10;
       ++p;
-      ++digit_cnt;
     }
     value += static_cast<float>(
         static_cast<double>(val2) / static_cast<double>(pow10));

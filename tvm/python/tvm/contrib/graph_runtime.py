@@ -71,8 +71,10 @@ class GraphModule(object):
         self.module = module
         self._set_input = module["set_input"]
         self._run = module["run"]
-        self._get_output = module["get_output"]
         self._get_input = module["get_input"]
+        self._get_output = module["get_output"]
+        self._get_outputs = module["get_outputs"]
+        self._get_output_count = module["get_output_count"]
         try:
             self._debug_get_output = module["debug_get_output"]
         except AttributeError:
@@ -139,6 +141,20 @@ class GraphModule(object):
         """
         self._get_output(index, out)
         return out
+
+    def get_outputs(self):
+        """Get index-th output to out
+
+        Return
+        ----------
+        list : list of NDArray
+            Returns the list of NDArray, which is the final outputs
+        """
+        ndarray_outputs = []
+        out_count = self._get_output_count()
+        for index in range(out_count):
+            ndarray_outputs.append(self._get_outputs(index))
+        return ndarray_outputs
 
     def debug_get_output(self, node, out):
         """Run graph upto node and get the output to out

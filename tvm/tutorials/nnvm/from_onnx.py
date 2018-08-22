@@ -18,6 +18,7 @@ import nnvm
 import tvm
 import onnx
 import numpy as np
+from mxnet.gluon.utils import download
 
 def download(url, path, overwrite=False):
     import os
@@ -42,7 +43,10 @@ model_url = ''.join(['https://gist.github.com/zhreshold/',
                      'bcda4716699ac97ea44f791c24310193/raw/',
                      '93672b029103648953c4e5ad3ac3aadf346a4cdc/',
                      'super_resolution_0.2.onnx'])
-download(model_url, 'super_resolution.onnx', True)
+#download(model_url, 'super_resolution.onnx', True)
+
+download(model_url, 'super_resolution.onnx')
+
 # now you have super_resolution.onnx on disk
 onnx_model = onnx.load('super_resolution.onnx')
 # we can load the graph as NNVM compatible model
@@ -65,7 +69,7 @@ x = np.array(img_y)[np.newaxis, np.newaxis, :, :]
 # ---------------------------------------------
 # We should be familiar with the process right now.
 import nnvm.compiler
-target = 'cuda'
+target = 'llvm'
 # assume first input name is data
 input_name = sym.list_input_names()[0]
 shape_dict = {input_name: x.shape}
@@ -75,8 +79,10 @@ graph, lib, params = nnvm.compiler.build(sym, target, shape_dict, params=params)
 # Execute on TVM
 # ---------------------------------------------
 # The process is no different from other example
-from tvm.contrib import graph_runtime
-ctx = tvm.gpu(0)
+#from tvm.contrib import graph_runtime
+from tvm.contrib.debugger import debug_runtime as graph_runtime
+
+ctx = tvm.cpu(0)
 dtype = 'float32'
 m = graph_runtime.create(graph, lib, ctx)
 # set inputs
@@ -86,7 +92,8 @@ m.set_input(**params)
 m.run()
 # get outputs
 output_shape = (1, 1, 672, 672)
-tvm_output = m.get_output(0, tvm.nd.empty(output_shape, dtype)).asnumpy()
+#tvm_output1 = m.get_output(0, tvm.nd.empty(output_shape, dtype)).asnumpy()
+tvm_output = m.get_outputs()[0].asnumpy()
 
 ######################################################################
 # Display results
