@@ -103,7 +103,7 @@ NDArray GraphRuntime::GetOutputs(int index) {
   DeviceAPI::Get(GetCtx())->StreamSync(GetCtx(), nullptr);
   uint32_t eid = this->entry_id(outputs_[index]);
   DLTensor *dltensor = &data_entry()[eid];
-  return NDArray::FromDLTensor(dltensor);
+  return NDArray();//::FromDLTensor(dltensor);
 }
 
 /*!

@@ -9,8 +9,8 @@
 #include <atomic>
 #include <vector>
 #include <utility>
-#include "./c_runtime_api.h"
-#include "./serializer.h"
+#include "c_runtime_api.h"
+#include "serializer.h"
 
 namespace tvm {
 namespace runtime {
@@ -144,6 +144,9 @@ class NDArray {
    * \param ctx The context of the Array.
    * \return The created Array
    */
+
+  TVM_DLL NDArray FromDLTensor(DLTensor* dl_tensor) ;
+
   TVM_DLL static NDArray Empty(std::vector<int64_t> shape,
                                DLDataType dtype,
                                DLContext ctx);
@@ -159,18 +162,6 @@ class NDArray {
    * \return The created NDArray view.
    */
   TVM_DLL static NDArray FromDLPack(DLManagedTensor* tensor);
-  /*!
-   * \brief Create a NDArray from a dltensor.
-   *
-   * This allows us to create a NDArray using the memory
-   * allocated by an external deep learning framework
-   * that is DLPack compatible.
-   *
-   * The memory is retained until the NDArray went out of scope.
-   * \param dl_tensor The DLPack tensor to copy from.
-   * \return The created NDArray view.
-   */
-  TVM_DLL static NDArray FromDLTensor(DLTensor* dl_tensor);
   /*!
    * \brief Function to copy data from one array to another.
    * \param from The source array.

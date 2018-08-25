@@ -6,6 +6,7 @@ import shutil
 from tvm._ffi.base import string_types
 from tvm.contrib import graph_runtime
 from tvm._ffi.function import get_global_func
+from . import common
 from . import debug_result
 
 _DUMP_ROOT_PREFIX = "tvmdbg_"
@@ -113,7 +114,7 @@ class GraphModuleDebug(graph_runtime.GraphModule):
         """
         # save to file
         folder_name = _DUMP_PATH_PREFIX + "ctx_"
-        folder_name = folder_name + ctx.replace(":", "_")
+        folder_name = folder_name + ctx.replace(":", "_")# + "/"
         path = os.path.join(self._dump_root, folder_name)
         self._ensure_dir(path)
         return path
@@ -149,7 +150,7 @@ class GraphModuleDebug(graph_runtime.GraphModule):
         # init the debug dumping environment
         self.debug_datum = debug_result.DebugResult(graph_json, self._dump_path)
 
-    def _run_debug(self):
+    def _run_debug(self, index=None):
         """Execute the node spcified with index will be executed.
         Each debug output will be copied to the buffer
         Time consumed for each execuion will be set as debug output.
@@ -176,7 +177,7 @@ class GraphModuleDebug(graph_runtime.GraphModule):
             self.set_input(**input_dict)
 
         # Step 1. Execute the graph
-        self._run_debug()
+        retvals = self._run_debug()
         # Step 2. Dump the output tensors to the dump folder
         self.debug_datum.dump_output_tensor()
         # Step 3. Display the collected information

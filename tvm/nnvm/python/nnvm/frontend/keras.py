@@ -269,14 +269,12 @@ def _convert_pooling(insym, keras_layer, symtab):
                   'padding': [0, 0]}
         if keras_layer.padding == 'valid':
             pass
-        # we insert a separate pad operator
         elif keras_layer.padding == 'same':
             in_h = keras_layer.input_shape[1]
             in_w = keras_layer.input_shape[2]
             pad_t, pad_b = _get_pad_pair(in_h, pool_h, stride_h)
             pad_l, pad_r = _get_pad_pair(in_w, pool_w, stride_w)
-            insym = _sym.pad(data=insym, pad_width=(
-                (0, 0), (0, 0), (pad_t, pad_b), (pad_l, pad_r)))
+            params['padding'] = [pad_t, pad_l, pad_b, pad_r]
         else:
             raise TypeError("Unsupported padding type : {}".format(keras_layer.padding))
         if pool_type == 'MaxPooling2D':
@@ -309,6 +307,21 @@ def _convert_upsample(insym, keras_layer, _):
     else:
         raise TypeError("Unsupported upsampling type : {}".format(upsample_type))
     return _sym.upsampling(insym, **params)
+
+
+def _convert_cropping(insym, keras_layer, _):
+    _check_data_format(keras_layer)
+    crop_type = type(keras_layer).__name__
+    if crop_type == "Cropping1D":
+        raise NotImplementedError("Cropping1D not implemented")
+    elif crop_type == "Cropping2D":
+        (_, in_h, in_w, _) = keras_layer.input_shape
+        ((crop_t, crop_b), (crop_l, crop_r)) = keras_layer.cropping
+    else:
+        raise TypeError("Unrecognized cropping type : {}".format(crop_type))
+    int32_max = np.iinfo(np.int32).max
+    return _sym.strided_slice(insym, begin=[0, 0, crop_t, crop_l],
+                              end=[int32_max, int32_max, in_h-crop_b, in_w-crop_r])
 
 
 def _convert_batchnorm(insym, keras_layer, symtab):
@@ -375,58 +388,50 @@ def _convert_reshape(insym, keras_layer, _):
     shape = (-1, ch) + keras_layer.target_shape[:-1]
     return _sym.reshape(insym, shape=shape)
 
-_state_ctr = {}
-_state_ctr['lstm_c'] = 0
-_state_ctr['lstm_h'] = 0
-
-def _new_state_sym(name, init=None):
-    """Returs a symbol for state"""
-    sym_name = name + "_state%d" % _state_ctr[name]
-    _state_ctr[name] += 1
-    return _sym.Variable(name=sym_name, init=init)
-
-def _get_state_buffer(init_size, name):
-    """Get the state buffer for rnn."""
-    buffer = np.zeros((1, init_size), 'float32')
-    return _new_state_sym(name, init=buffer)
-
 def _convert_lstm(insym, keras_layer, symtab):
     _check_data_format(keras_layer)
-    #print(" _convert_lstm insym = ", insym)
-    #print(" _convert_lstm keras_layer", keras_layer)
-    #print(" _convert_lstm symtab", symtab)
     print(" input_shape = ", keras_layer.input_shape, "Len =", len(keras_layer.input_shape))
     print(" output_shape = ", keras_layer.output_shape, "Len =", len(keras_layer.output_shape))
     #print(" state units = ", keras_layer.units)
     if not isinstance(insym, list):
-        #print(" First layer")
-        params = {}
-        c_sym = _get_state_buffer(keras_layer.units, "lstm_c")
-        h_sym = _get_state_buffer(keras_layer.units, "lstm_h")
-        params['lstm_c'] = c_sym
-        params['lstm_h'] = h_sym
-        #print("finish LSTM layer 1")
+        print("keras_layer.units =", keras_layer.units)
+        buffer = np.zeros((1, keras_layer.units), 'float32')
+        c_sym = symtab.new_const(buffer)
+        h_sym = symtab.new_const(buffer)
         insym =  [insym, c_sym, h_sym]
 
     input_shapes = keras_layer.input_shape
+    print("input_shapes type=", type(input_shapes))
+
     if not isinstance(input_shapes, list):
         input_shapes = [input_shapes]
 
+    for idx, input_shape in enumerate(input_shapes):
+        input_shapes[idx] = tuple([x for x in list(input_shape) if  x is not None])
+
+    print("After input_shapes=", input_shapes)
     in_data = insym[0]
     in_state_c = insym[1]
     in_state_h = insym[2]
-
     weightList = keras_layer.get_weights()
-    in_weight = symtab.new_const(weightList[0].transpose([1, 0]))
+    print("Weights shape")
+    for wt in weightList:
+        print(wt.shape)
+
+    input_shape = [list(input_shapes[0])]#(1, input_shapes[0][-1])
+
+    weight = weightList[1].transpose([1, 0])
+    in_weight = symtab.new_const(weight)
+    weight_shape = [list(weight.shape)]
+
     in_bias = symtab.new_const(weightList[2])
+    bias_shape = [list(weightList[2].shape)]
+
     forget_bias = 0.0#symtab.new_const(weightList[1])
 
-    input_shape = (1, input_shapes[0][-1])
-    weight_shape = weightList[0].shape
 
-
-    batch_size, input_size = input_shape[0], input_shape[1]
-    num_hidden_layers = weight_shape[1]
+    batch_size, input_size = 1, input_shape[0][1]
+    num_hidden_layers = weight_shape[0][0]
     num_hidden = keras_layer.units
 
     print("")
@@ -435,18 +440,20 @@ def _convert_lstm(insym, keras_layer, symtab):
 
     print("input_shape=", input_shape)
     print("weight_shape=", weight_shape)
+    print("bias_shape=", bias_shape)
     print("forget_bias=", forget_bias)
     print("batch_size=", batch_size)
     print("input_size=", input_size)
     print("num_hidden_layers=", num_hidden_layers)
     print("num_hidden=", num_hidden)
 
-    in_data = _sym.reshape(in_data,
-                           shape=(batch_size, input_size))
-    #ixh = _sym.concatenate(*[in_data, in_state_h], axis=1)
+    ixh  = _sym.flatten(in_data)#, shape=(batch_size, input_size))
+    #ixh  = _sym.reshape(in_data, shape=(1, input_shape[0][1]))
+
+    ixh = _sym.concatenate(*[ixh , in_state_h], axis=1)
     #in_weight = _sym.transpose(in_weight)
 
-    gates = _sym.dense(in_data, in_weight, in_bias, use_bias=True, units=num_hidden_layers)
+    gates = _sym.dense(ixh, in_weight, in_bias, use_bias=True, units=num_hidden_layers)
 
     gate_list = _sym.split(gates, indices_or_sections=4, axis=1)
     in_gate = _sym.sigmoid(gate_list[0])
@@ -511,6 +518,7 @@ _convert_map = {
     'Multiply'                 : _convert_merge,
     'ZeroPadding2D'            : _convert_padding,
     'UpSampling2D'             : _convert_upsample,
+    'Cropping2D'               : _convert_cropping,
 
     # 'ZeroPadding1D'          : _convert_padding,
     # 'AveragePooling1D'       : _convert_pooling,
@@ -518,7 +526,6 @@ _convert_map = {
     # 'GlobalAveragePooling1D' : _convert_pooling,
     # 'GlobalMaxPooling1D'     : _convert_pooling,
     # 'Cropping1D'             : _convert_cropping,
-    # 'Cropping2D'             : _convert_cropping,
     # 'UpSampling1D'           : _convert_upsample,
     # 'UpSampling3D'           : _convert_upsample,
     # 'Conv1D'                 : _convert_convolution1d,
@@ -554,7 +561,7 @@ def _as_list(arr):
         return arr
     return [arr]
 
-def keras_op_to_nnvm(insym, keras_layer, outname, symtab):
+def keras_op_to_nnvm2(insym, keras_layer, outname, symtab):
     """Convert keras layer to nnvm symbol, and update symtab.
 
     Parameters
@@ -574,9 +581,12 @@ def keras_op_to_nnvm(insym, keras_layer, outname, symtab):
     if type(keras_layer).__name__ not in _convert_map:
         raise NotImplementedError("{} is not supported".format((type(keras_layer).__name__)))
     ret = _convert_map[type(keras_layer).__name__](insym, keras_layer, symtab)
+    print("**keras_op_to_nnvm Finished**")
+    print(ret.debug_str())
+    print("**keras_op_to_nnvm Finished**")
     symtab.set_var(outname, ret)
 
-def keras_op_to_nnvm2(insym, keras_layer, outname, symtab):
+def keras_op_to_nnvm(insym, keras_layer, outname, symtab):
     """Convert keras layer to nnvm symbol, and update symtab.
 
     Parameters
@@ -602,8 +612,11 @@ def keras_op_to_nnvm2(insym, keras_layer, outname, symtab):
             name = outname + ':' + str(tensor_idx)
             print("outname=", outname, "name =", name, "sym=", sym[tensor_idx])
             symtab.set_var(name, sym[tensor_idx])
+            '''print("**keras_op_to_nnvm Finished**")
+            print(sym[tensor_idx].debug_str())
+            print("**keras_op_to_nnvm Finished**")'''
 
-def from_keras(model):
+def from_keras2(model):
     """Convert keras model to NNVM format.
 
     Parameters
@@ -633,7 +646,7 @@ def from_keras(model):
 
     symtab = SymbolTable()
     for keras_layer in model.layers:
-        print("isinstance(keras_layer)=", type(keras_layer))
+        print("isinstance(keras_layer)=", type(keras_layer), "keras_layer.name =", keras_layer.name)
         if isinstance(keras_layer, keras.engine.InputLayer):
             symtab.get_var(keras_layer.name, must_contain=False)
         else:
@@ -655,8 +668,10 @@ def from_keras(model):
                 for pred_idx, pred in zip(node.node_indices, node.inbound_layers):
                     print("pred_idx", pred_idx, "pred.name=", pred.name)
                     if isinstance(pred, keras.engine.InputLayer):
-                        _sym = symtab.get_var(pred.name, must_contain=True)
+                        _sym = symtab.get_var(pred.name, must_contain=False)
                     else:
+                        #if '_input' in pred.name:
+                        #    symtab.get_var(keras_layer.name, must_contain=False)
                         _sym = symtab.get_var(pred.name + ':' + str(pred_idx), must_contain=True)
                     insym.append(_sym)
 
@@ -670,7 +685,7 @@ def from_keras(model):
     #print("outsym = ", outsym.debug_str())
     return outsym, tvmparams
 
-def from_keras2(model):
+def from_keras(model):
     """Convert keras model to NNVM format.
 
     Parameters
@@ -690,7 +705,7 @@ def from_keras2(model):
         import keras
     except ImportError:
         raise ImportError('Keras must be installed')
-    print(model.to_json(indent=4))
+    #print(model.to_json(indent=4))
     assert isinstance(model, keras.engine.training.Model)
     if keras.backend.backend() != 'tensorflow':
         raise ValueError("Keras frontend currently supports tensorflow backend only.")
@@ -728,7 +743,8 @@ def from_keras2(model):
 
                     print("pred =", pred, "pred_idx=", pred_idx,  "pred_name=" ,pred.name)
                     if isinstance(pred, keras.engine.InputLayer):
-                        _sym = symtab.get_var(pred.name, must_contain=True)
+                        _sym = symtab.get_var(pred.name, must_contain=False)
+                        #_sym = symtab.get_var(pred.name, must_contain=True)
                         print("****keras.engine.InputLayer****")
                     else:
                         pred_name = pred.name + ':' + str(pred_idx)  + ':' + str(t_idx)

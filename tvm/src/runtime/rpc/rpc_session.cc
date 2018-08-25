@@ -11,10 +11,12 @@
 #include <array>
 #include <string>
 #include <chrono>
-#include "./rpc_session.h"
+#include <vector>
+#include <utility>
+#include "rpc_session.h"
 #include "../../common/ring_buffer.h"
 
-#define PRINT printf("\nC++ rpc_session.cc %f %d", __func__, __LINE__);
+#define PRINT printf("\nC++ rpc_session.cc %s %d", __func__, __LINE__);
 namespace tvm {
 namespace runtime {
 // Temp buffer for data array
@@ -778,14 +780,14 @@ class RPCSession::EventHandler : public dmlc::Stream {
   // Utility functions
   // Internal read function, update pending_request_bytes_
   size_t Read(void* data, size_t size) final {
-      PRINT
+      //PRINT
     CHECK_LE(size, pending_request_bytes_);
     reader_->Read(data, size);
     pending_request_bytes_ -= size;
     return size;
   }
   void Write(const void* data, size_t size) final {
-      PRINT
+      //PRINT
     writer_->Write(data, size);
   }
   // Number of pending bytes requests

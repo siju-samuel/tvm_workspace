@@ -704,6 +704,7 @@ def test_forward_ptb():
 
     def _get_tvm_graph_module(graph_def):
         sym, params = nnvm.frontend.from_tensorflow(graph_def)
+        #print(sym.debug_str())
 
         #Cell inputs 'c and 'h' consist of all layers values
         shape_dict = {'Model/Placeholder': (batch_size, num_steps),
@@ -713,8 +714,11 @@ def test_forward_ptb():
                       'Model/RNN/RNN/multi_rnn_cell/cell_0/lstm_cell/LSTMBlockCell_c':'float32',
                       'Model/RNN/RNN/multi_rnn_cell/cell_0/lstm_cell/LSTMBlockCell_h':'float32'}
         target = 'llvm'
-        graph, lib, params = nnvm.compiler.build(sym, target, shape_dict,
-                                                 dtype=dtype_dict, params=params)
+        with nnvm.compiler.build_config(opt_level=0):
+            graph, lib, params = nnvm.compiler.build(sym, target, shape_dict,
+                                                     dtype=dtype_dict, params=params)
+
+        #print(graph.ir())
         from tvm.contrib import graph_runtime
         ctx = tvm.cpu(0)
         return params, graph_runtime.create(graph, lib, ctx)
@@ -853,7 +857,7 @@ def test_forward_matmul():
 # Main
 # ----
 if __name__ == '__main__':
-    test_forward_convolution()
+    '''test_forward_convolution()
     test_forward_pooling()
     test_forward_reshape()
     test_forward_squeeze()
@@ -875,4 +879,5 @@ if __name__ == '__main__':
     test_forward_ptb()
     test_forward_lrn()
     test_forward_l2_normalize()
-    test_forward_matmul()
+    #test_forward_matmul()'''
+    test_forward_ptb()

@@ -43,7 +43,7 @@ def download(url, path, overwrite=False):
 # ----------------------------
 # We load a pretrained resnet-50 classification model provided by keras.
 weights_url = ''.join(['https://github.com/dmlc/web-data/blob/master/keras/models/s2s/s2s.h5'])
-weights_file = 'addition_lstm.h5'
+weights_file = 'test_lstm.h5'#'addition_lstm.h5'
 download(weights_url, weights_file)
 keras_model = load_model(weights_file)
 
@@ -75,11 +75,9 @@ print('input_1', data.shape)
 sym, params = nnvm.frontend.from_keras(keras_model)
 # compile the model
 target = 'llvm'
-input_1 = np.zeros((1, 71))
-input_2 = np.zeros((1, 94))
+input_1 = np.zeros((1, 12))
 
-shape_dict = {'input_1': input_1.shape,
-              'input_2': input_2.shape}
+shape_dict = {'lstm_1_input': input_1.shape}
 with nnvm.compiler.build_config(opt_level=2):
     graph, lib, params = nnvm.compiler.build(sym, target, shape_dict, params=params)
 
@@ -91,7 +89,7 @@ from tvm.contrib import graph_runtime
 ctx = tvm.cpu(0)
 m = graph_runtime.create(graph, lib, ctx)
 # set inputs
-m.set_input('input_1', tvm.nd.array(data.astype('float32')))
+m.set_input('lstm_1_input', tvm.nd.array(data.astype('float32')))
 m.set_input(**params)
 # execute
 m.run()

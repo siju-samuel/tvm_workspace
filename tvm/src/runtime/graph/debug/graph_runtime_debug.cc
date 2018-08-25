@@ -44,7 +44,7 @@ class GraphRuntimeDebug : public GraphRuntime {
    */
   NDArray GetNDArray(int index, int eid) {
     DLTensor *dltensor = &data_entry()[GetEntryId(index, eid)];
-    return NDArray::FromDLTensor(dltensor);
+    return NDArray();//::FromDLTensor(dltensor);
   }
 
   PackedFunc GetFunction(const std::string& name,
